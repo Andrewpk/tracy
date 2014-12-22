@@ -23,8 +23,8 @@ class Logger implements ILogger
 	/** @var string|array email or emails to which send error notifications */
 	public $email;
 
-	/** @var int interval for sending email is 2 days */
-	public $emailSnooze = 172800;
+	/** @var mixed interval for sending email is 2 days */
+	public $emailSnooze = '2 days';
 
 	/** @var callable handler for sending emails */
 	public $mailer;
@@ -44,30 +44,28 @@ class Logger implements ILogger
 
 	/**
 	 * Logs message or exception to file and sends email notification.
-	 * @param  string|Exception
+	 * @param  string|\Exception
 	 * @param  int   one of constant ILogger::INFO, WARNING, ERROR (sends email), EXCEPTION (sends email), CRITICAL (sends email)
 	 * @return string logged error filename
 	 */
-	public function log($value, $priority = self::INFO)
+	public function log($message, $priority = self::INFO)
 	{
-		if (!is_dir($this->directory)) {
+		if (!$this->directory) {
+			throw new \LogicException('Directory is not specified.');
+		} elseif (!is_dir($this->directory)) {
 			throw new \RuntimeException("Directory '$this->directory' is not found or is not directory.");
 		}
 
-		$exceptionFile = $value instanceof \Exception ? $this->logException($value) : NULL;
-		$message = $this->formatMessage($value);
+		$exceptionFile = $message instanceof \Exception ? $this->logException($message) : NULL;
+		$line = $this->formatLogLine($message, $exceptionFile);
 		$file = $this->directory . '/' . strtolower($priority ?: self::INFO) . '.log';
 
-		if (!@file_put_contents($file, $message . PHP_EOL, FILE_APPEND | LOCK_EX)) {
+		if (!@file_put_contents($file, $line . PHP_EOL, FILE_APPEND | LOCK_EX)) {
 			throw new \RuntimeException("Unable to write to log file '$file'. Is directory writable?");
 		}
 
-		if (in_array($priority, array(self::ERROR, self::EXCEPTION, self::CRITICAL), TRUE)
-			&& $this->email && $this->mailer
-			&& @filemtime($this->directory . '/email-sent') + $this->emailSnooze < time() // @ - file may not exist
-			&& @file_put_contents($this->directory . '/email-sent', 'sent') // @ - file may not be writable
-		) {
-			call_user_func($this->mailer, $message, implode(', ', (array) $this->email));
+		if (in_array($priority, array(self::ERROR, self::EXCEPTION, self::CRITICAL), TRUE)) {
+			$this->sendEmail($line);
 		}
 
 		return $exceptionFile;
@@ -77,27 +75,34 @@ class Logger implements ILogger
 	/**
 	 * @return string
 	 */
-	private function formatMessage($value, $exceptionFile = NULL)
+	protected function formatMessage($message)
 	{
-		if ($value instanceof \Exception) {
-			while ($value) {
-				$tmp[] = ($value instanceof \ErrorException ?
-					'Fatal error: ' . $value->getMessage()
-					: get_class($value) . ': ' . $value->getMessage()
-				) . ' in ' . $value->getFile() . ':' . $value->getLine();
-				$value = $value->getPrevious();
+		if ($message instanceof \Exception) {
+			while ($message) {
+				$tmp[] = ($message instanceof \ErrorException ?
+					'Fatal error: ' . $message->getMessage()
+					: get_class($message) . ': ' . $message->getMessage()
+				) . ' in ' . $message->getFile() . ':' . $message->getLine();
+				$message = $message->getPrevious();
 			}
-			$value = implode($tmp, "\ncaused by ");
+			$message = implode($tmp, "\ncaused by ");
 
-		} elseif (!is_string($value)) {
-			$value = Dumper::toText($value);
+		} elseif (!is_string($message)) {
+			$message = Dumper::toText($message);
 		}
 
-		$value = trim(preg_replace('#\s*\r?\n\s*#', ' ', $value));
+		return trim($message);
+	}
 
+
+	/**
+	 * @return string
+	 */
+	protected function formatLogLine($message, $exceptionFile = NULL)
+	{
 		return implode(' ', array(
 			@date('[Y-m-d H-i-s]'),
-			$value,
+			preg_replace('#\s*\r?\n\s*#', ' ', $this->formatMessage($message)),
 			' @  ' . Helpers::getSource(),
 			$exceptionFile ? ' @@  ' . basename($exceptionFile) : NULL
 		));
@@ -107,7 +112,7 @@ class Logger implements ILogger
 	/**
 	 * @return string logged error filename
 	 */
-	private function logException(\Exception $exception)
+	protected function logException(\Exception $exception)
 	{
 		$dir = strtr($this->directory . '/', '\\/', DIRECTORY_SEPARATOR . DIRECTORY_SEPARATOR);
 		$hash = md5(preg_replace('~(Resource id #)\d+~', '$1', $exception));
@@ -129,6 +134,25 @@ class Logger implements ILogger
 		}
 
 		return $file;
+	}
+
+
+	/**
+	 * @param  string
+	 * @return void
+	 */
+	protected function sendEmail($message)
+	{
+		$snooze = is_numeric($this->emailSnooze)
+			? $this->emailSnooze
+			: strtotime($this->emailSnooze) - time();
+
+		if ($this->email && $this->mailer
+			&& @filemtime($this->directory . '/email-sent') + $snooze < time() // @ - file may not exist
+			&& @file_put_contents($this->directory . '/email-sent', 'sent') // @ - file may not be writable
+		) {
+			call_user_func($this->mailer, $message, implode(', ', (array) $this->email));
+		}
 	}
 
 

@@ -35,7 +35,7 @@ $counter = 0;
 	?> -->
 
 	<style type="text/css" class="tracy-debug">
-	<?php echo preg_replace('#\s+#', ' ', file_get_contents(__DIR__ . '/bluescreen.css')) ?>
+	<?php echo preg_replace('#[\r\n\t ]+#', ' ', file_get_contents(__DIR__ . '/bluescreen.css')) ?>
 	</style>
 	<script>document.documentElement.className+=' tracy-js'</script>
 </head>
@@ -344,11 +344,10 @@ $counter = 0;
 
 <script>
 (function() {
-	if (!document.addEventListener) {
-		document.getElementById('tracyBluescreenError').innerHTML += '<div id=tracyBluescreenIEWarning>Warning: Tracy requires IE 9+<\/div>';
+	if (!document.documentElement.classList) {
+		document.getElementById('tracyBluescreenError').innerHTML += '<div id=tracyBluescreenIEWarning>Warning: Tracy requires IE 10+<\/div>';
 		return;
 	}
-	<?php readfile(__DIR__ . '/Tracy.js') ?>
 	<?php readfile(__DIR__ . '/dumper.js') ?>
 	<?php readfile(__DIR__ . '/bluescreen.js') ?>
 })();

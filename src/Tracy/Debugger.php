@@ -92,6 +92,9 @@ class Debugger
 	/** @var string command to open browser (use 'start ""' in Windows) */
 	public static $browser;
 
+	/** @var string custom static error template */
+	public static $errorTemplate;
+
 	/********************* services ****************d*g**/
 
 	/** @var BlueScreen */
@@ -228,25 +231,26 @@ class Debugger
 			}
 		}
 
-		$logMsg = 'Unable to log error. Check if directory is writable and path is absolute.';
 		if (self::$productionMode) {
 			try {
 				self::log($exception, self::EXCEPTION);
 			} catch (\Exception $e) {
 			}
 
-			$error = isset($e) ? $logMsg : NULL;
 			if (self::isHtmlMode()) {
-				require __DIR__ . '/templates/error.phtml';
-			} else {
-				echo "ERROR: application encountered an error and can not continue.\n$error\n";
+				$logged = empty($e);
+				require self::$errorTemplate ?: __DIR__ . '/templates/error.phtml';
+			} elseif (PHP_SAPI === 'cli') {
+				fwrite(STDERR, 'ERROR: application encountered an error and can not continue. '
+					. (isset($e) ? "Unable to log error.\n" : "Error was logged.\n"));
 			}
 
 		} elseif (!connection_aborted() && self::isHtmlMode()) {
 			self::getBlueScreen()->render($exception);
 			self::getBar()->render();
 
-		} elseif (connection_aborted() || !self::fireLog($exception)) {
+		} else {
+			self::fireLog($exception);
 			try {
 				$file = self::log($exception, self::EXCEPTION);
 				if ($file && !headers_sent()) {
@@ -257,7 +261,7 @@ class Debugger
 					exec(self::$browser . ' ' . escapeshellarg($file));
 				}
 			} catch (\Exception $e) {
-				echo "$exception\n$logMsg {$e->getMessage()}\n";
+				echo "$exception\nUnable to log error: {$e->getMessage()}\n";
 			}
 		}
 
@@ -304,10 +308,12 @@ class Debugger
 		} elseif (($severity & error_reporting()) !== $severity) {
 			return FALSE; // calls normal error handler to fill-in error_get_last()
 
-		} elseif (($severity & self::$logSeverity) === $severity) {
+		} elseif (self::$productionMode && ($severity & self::$logSeverity) === $severity) {
 			$e = new ErrorException($message, 0, $severity, $file, $line);
 			$e->context = $context;
-			self::log($e, self::ERROR);
+			try {
+				self::log($e, self::ERROR);
+			} catch (\Exception $foo) {}
 			return NULL;
 
 		} elseif (!self::$productionMode && !isset($_GET['_tracy_skip_error'])
@@ -326,7 +332,9 @@ class Debugger
 			return NULL;
 
 		} elseif (self::$productionMode) {
-			self::log("$message in $file:$line", self::ERROR);
+			try {
+				self::log("$message in $file:$line", self::ERROR);
+			} catch (\Exception $foo) {}
 			return NULL;
 
 		} else {
@@ -492,15 +500,13 @@ class Debugger
 
 
 	/**
-	 * Logs message or exception to file.
+	 * Logs message or exception.
 	 * @param  string|Exception
-	 * @return string logged error filename
+	 * @return mixed
 	 */
 	public static function log($message, $priority = ILogger::INFO)
 	{
-		if (self::getLogger()->directory) {
-			return self::getLogger()->log($message, $priority);
-		}
+		return self::getLogger()->log($message, $priority);
 	}
 
 
